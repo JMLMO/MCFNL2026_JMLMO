@@ -56,6 +56,31 @@ def test_fdtd_PEC_boundary_conditions():
     assert np.corrcoef(e_solved, e_expected)[0,1] > 0.99
     assert np.allclose(h_solved, h_expected, atol=0.01)
 
+def test_fdtd_PMC_boundary_conditions():
+    xMax = 1
+    xMin = -1
+    x = np.linspace(xMin, xMax, 201)
+    boundaries = ('PMC', 'PMC')
+    
+    x0 = 0.0
+    sigma = 0.05
+    initial_h = gaussian(x, x0, sigma)
+
+    fdtd = FDTD1D(x, boundaries)
+    fdtd.load_initial_field(initial_h)
+
+    L = xMax - xMin
+    t_final = L / C
+    fdtd.run_until(t_final)
+
+    e_solved = fdtd.get_e()
+    h_solved = fdtd.get_h()
+
+    h_expected = - initial_h
+    e_expected = np.zeros_like(e_solved)
+
+    assert np.corrcoef(h_solved, h_expected)[0,1] > 0.99
+    assert np.allclose(e_solved, e_expected, atol=0.01)
 
 def test_fdtd_periodic_boundary_conditions():
     xMax = 1
