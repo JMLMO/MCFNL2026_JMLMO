@@ -94,17 +94,7 @@ class FDTD1D:
     def run_until(self, t_final):
         n_steps = round((t_final - self.t) / self.dt)
         for _ in range(n_steps):
-            
-            plt.clf()
-            plt.plot(self.x, self.get_e(), label="E")
-            plt.plot((self.x[1:] + self.x[:-1]) / 2.0, self.get_h(), label="H")
-
-            plt.ylim(-1.2, 1.2)
-            plt.legend()
-            plt.pause(0.01)
-            
             self._step()
-            
         self.t = t_final  
         
     def get_e(self):
