@@ -266,5 +266,41 @@ def test_fdtd_dielectric_reflection():
     assert np.abs(R_numerical - np.abs(R_theory)) < 0.02
 
 
+def test_fdtd_cfl_condition():
+    x = np.linspace(-1, 1, 201)
+    dx = x[1] - x[0]
+    L = x[-1] - x[0]
+    C = 1.0
+    
+    x0 = 0.0
+    sigma = 0.1
+    initial_e = gaussian(x, x0, sigma)
+    
+    # 1. Test de Estabilidad (CFL exacto: dt = dx/C)
+    fdtd = FDTD1D(x)
+    fdtd.load_initial_field(initial_e)
+    
+    t_long = L / C 
+    fdtd.run_until(t_long)
+    
+    e_final = fdtd.get_e()
+    
+    assert np.all(np.isfinite(e_final)), "La simulación divergió en el límite CFL"
+    assert np.max(np.abs(e_final)) <= np.max(initial_e) * 1.01 
+
+    # --- 2. Test de Inestabilidad (CFL > 1) ---
+    fdtd_unstable = FDTD1D(x)
+    fdtd_unstable.load_initial_field(initial_e)
+    
+    fdtd_unstable.dt = (dx / 1.0) * 1.1 
+    fdtd_unstable.run_until(fdtd_unstable.t + 100 * fdtd_unstable.dt)
+    
+    e_unstable = fdtd_unstable.get_e()
+
+    has_diverged = np.any(np.isnan(e_unstable)) or np.max(np.abs(e_unstable)) > 1e10
+    
+    assert has_diverged, "La simulación debería haber divergido con CFL > 1"
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -133,8 +133,8 @@ def test_fdtd_vs_analytical_conductive():
     Phi = panel_transfer_matrix(freq[mask], d, eps_r, sigma)
     R_anal, T_anal = RT_from_transfer_matrix(Phi)
 
-    assert np.corrcoef(np.abs(R_fdtd[mask]), np.abs(R_anal))[0, 1] > 0.90
-    assert np.corrcoef(np.abs(T_fdtd[mask]), np.abs(T_anal))[0, 1] > 0.90
+    assert np.corrcoef(np.abs(R_fdtd[mask]), np.abs(R_anal))[0, 1] > 0.99
+    assert np.corrcoef(np.abs(T_fdtd[mask]), np.abs(T_anal))[0, 1] > 0.99
 
 
 if __name__ == "__main__":
