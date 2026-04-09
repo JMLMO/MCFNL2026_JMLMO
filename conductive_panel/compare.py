@@ -47,7 +47,7 @@ def compare_single_panel(
     freq_fdtd, R_fdtd, T_fdtd = compute_RT_fdtd(panel_res, ref_res)
 
     # Analytical
-    f_anal = np.linspace(0.01, freq_fdtd.max(), 2000)
+    f_anal = np.linspace(0.01, freq_fdtd.max(), 4000)
     Phi = panel_transfer_matrix(f_anal, d, eps_r, sigma)
     R_anal, T_anal = RT_from_transfer_matrix(Phi)
 
@@ -205,7 +205,7 @@ def compare_multilayer(
     T_fdtd[fft_mask] = E_trans_fft[fft_mask] / E_inc_fft[fft_mask]
 
     # Analytical
-    f_anal = np.linspace(0.01, freq_fdtd.max(), 2000)
+    f_anal = np.linspace(0.01, freq_fdtd.max(), 4000)
     Phi_stack = stack_transfer_matrix(f_anal, layers)
     R_anal, T_anal = RT_from_transfer_matrix(Phi_stack)
 
