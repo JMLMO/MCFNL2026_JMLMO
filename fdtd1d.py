@@ -6,6 +6,67 @@ C = 1.0
 def gaussian(x, x0, sigma):
     return np.exp(-0.5 * ((x - x0)/sigma)**2)
 
+def panel_transfer_matrix(freq, d, eps_r=1.0, sigma=0.0, mu_r=1.0, *, eps_zz=None, sigma_zz=None, mu_yy=None):
+    freq = np.atleast_1d(np.asarray(freq, dtype=complex))
+    omega = 2.0 * np.pi * freq
+
+    eps_eff = eps_zz if eps_zz is not None else eps_r
+    sigma_eff = sigma_zz if sigma_zz is not None else sigma
+    mu_eff = mu_yy if mu_yy is not None else mu_r
+
+    eps_c = eps_eff - 1j * sigma_eff / omega
+    gamma = 1j * omega * np.sqrt(mu_eff * eps_c)
+    eta = np.sqrt(mu_eff / eps_c)
+
+    gd = gamma * d
+    ch = np.cosh(gd)
+    sh = np.sinh(gd)
+
+    Phi = np.zeros((len(freq), 2, 2), dtype=complex)
+    Phi[:, 0, 0] = ch
+    Phi[:, 0, 1] = eta * sh
+    Phi[:, 1, 0] = sh / eta
+    Phi[:, 1, 1] = ch
+    return Phi
+
+
+# ── BONUS: multilayer panel ──
+def stack_transfer_matrix(freq, layers):
+    freq = np.atleast_1d(np.asarray(freq, dtype=complex))
+    Phi_total = np.zeros((len(freq), 2, 2), dtype=complex)
+    Phi_total[:, 0, 0] = 1.0
+    Phi_total[:, 1, 1] = 1.0
+
+    for layer in layers:
+        Phi_i = panel_transfer_matrix(
+            freq, d=layer['d'],
+            eps_r=layer.get('eps_r', 1.0),
+            sigma=layer.get('sigma', 0.0),
+            mu_r=layer.get('mu_r', 1.0),
+            eps_zz=layer.get('eps_zz'),
+            sigma_zz=layer.get('sigma_zz'),
+            mu_yy=layer.get('mu_yy'),
+        )
+        Phi_new = np.zeros_like(Phi_total)
+        Phi_new[:, 0, 0] = Phi_total[:, 0, 0]*Phi_i[:, 0, 0] + Phi_total[:, 0, 1]*Phi_i[:, 1, 0]
+        Phi_new[:, 0, 1] = Phi_total[:, 0, 0]*Phi_i[:, 0, 1] + Phi_total[:, 0, 1]*Phi_i[:, 1, 1]
+        Phi_new[:, 1, 0] = Phi_total[:, 1, 0]*Phi_i[:, 0, 0] + Phi_total[:, 1, 1]*Phi_i[:, 1, 0]
+        Phi_new[:, 1, 1] = Phi_total[:, 1, 0]*Phi_i[:, 0, 1] + Phi_total[:, 1, 1]*Phi_i[:, 1, 1]
+        Phi_total = Phi_new
+    return Phi_total
+# ── END BONUS ──
+
+
+def RT_from_transfer_matrix(Phi):
+    A, B, C_, D = Phi[:, 0, 0], Phi[:, 0, 1], Phi[:, 1, 0], Phi[:, 1, 1]
+    denom = A + B + C_ + D
+    return (A + B - C_ - D) / denom, 2.0 / denom
+
+
+def reflection_transmission(freq, d, eps_r=1.0, sigma=0.0, mu_r=1.0, *, eps_yy=None, sigma_yy=None, mu_zz=None):
+    return RT_from_transfer_matrix(panel_transfer_matrix(freq, d, eps_r, sigma, mu_r,
+                                                        eps_yy=eps_yy, sigma_yy=sigma_yy, mu_zz=mu_zz))
+
 class FDTD1D:
     mu0 = 1.0
     eps0 = 1.0  
@@ -22,8 +83,10 @@ class FDTD1D:
         self.boundaries = boundaries
         
         self.sig = np.zeros(self.N)
-        self.eps_r = np.ones(self.N)      
-        self.eps = self.eps0 * self.eps_r  
+        self.eps_r = np.ones(self.N)
+        self.eps = self.eps0 * self.eps_r
+        self.mu_r = np.ones(self.N - 1)
+        self.mu = self.mu0 * self.mu_r
         self.x_o = x_o
         self.pert = pert
         self.pert_dir = pert_dir
@@ -35,6 +98,7 @@ class FDTD1D:
         r = self.dt / self.dx
         
         self.eps = self.eps0 * self.eps_r
+        self.mu = self.mu0 * self.mu_r
 
         ca = (2 * self.eps - self.sig * self.dt) / (2 * self.eps + self.sig * self.dt)
         cb = (2 * self.dt / self.dx) / (2 * self.eps + self.sig * self.dt)
@@ -76,7 +140,7 @@ class FDTD1D:
             idx = np.argmin(np.abs(self.x - self.x_o))
             self.e[idx] += self.pert(self.t + self.dt/2) 
 
-        self.h -= r * (self.e[1:] - self.e[:-1])
+        self.h -= (self.dt / (self.mu * self.dx)) * (self.e[1:] - self.e[:-1])
         
         self.t += self.dt   
 
