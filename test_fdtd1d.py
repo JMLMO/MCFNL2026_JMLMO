@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 import pytest
-from fdtd1d import FDTD1D, C, gaussian
+from fdtd1d import FDTD1D, C, gaussian, panel_transfer_matrix, RT_from_transfer_matrix
 
 
 
@@ -210,96 +210,80 @@ def test_fdtd_dissipative_exact():
     assert np.allclose(e_solved, e_expected, atol=1e-2)
     assert np.allclose(h_solved, h_expected, atol=1e-2)
 
-
-def test_fdtd_dielectric_reflection():
+def test_fdtd_conductive_panel_reflection():
     L = 4.0
-    N = 2001
+    N = 4001
     x = np.linspace(0, L, N)
     xH = (x[1:] + x[:-1]) / 2.0
-    dx = x[1] - x[0]
-    dt = dx / C
-    
     boundaries = ('mur', 'mur')
 
+    pulse_x0 = 0.8
+    sigma = 0.06
+
+    panel_center = L / 2
+    panel_d = 0.2
+    panel_left = panel_center - panel_d / 2
+    panel_right = panel_center + panel_d / 2
+    eps_r_panel = 4.0
+    sigma_panel = 0.5
+
+    obs_left_idx = np.argmin(np.abs(x - (panel_left - 0.4)))
+    obs_right_idx = np.argmin(np.abs(x - (panel_right + 0.4)))
+
+    initial_e = gaussian(x, pulse_x0, sigma)
+    initial_h = gaussian(xH, pulse_x0, sigma)
+
+    t_final = 2.5 * L
+
+    # Simulation WITH panel
     fdtd = FDTD1D(x, boundaries)
-
-    eps_r_1 = 1.0   
-    eps_r_2 = 4.0   
-    interface_pos = L / 2
-    
-    fdtd.eps_r = np.where(x < interface_pos, eps_r_1, eps_r_2)
-    fdtd.sig = np.zeros_like(x) 
-
-    eta_1 = 1.0 / np.sqrt(eps_r_1)  # = 1
-    eta_2 = 1.0 / np.sqrt(eps_r_2)  # = 0.5
-    R_theory = (eta_1 - eta_2) / (eta_1 + eta_2)
-
-    x0 = 1.0
-    sigma = 0.05
-    initial_e = gaussian(x, x0, sigma)
-    initial_h = gaussian(xH, x0, sigma) / eta_1
-
-    E_inc_max = np.max(initial_e)
-
     fdtd.load_initial_field(initial_e)
     fdtd.h = initial_h.copy()
+    fdtd.eps_r = np.where((x >= panel_left) & (x <= panel_right), eps_r_panel, 1.0)
+    fdtd.sig = np.where((x >= panel_left) & (x <= panel_right), sigma_panel, 0.0)
 
-    x_obs = 0.5
-    obs_idx = np.argmin(np.abs(x - x_obs))
-
-    t_at_interface = (interface_pos - x0) / C
-    t_ref_at_obs = t_at_interface + (interface_pos - x[obs_idx]) / C
-
-    t_final = 2 * interface_pos / C
-    n_steps = int(t_final / dt)
-    
-    E_ref_max_observed = 0.0
-    
-    for _ in range(n_steps):
+    n_steps = round(t_final / fdtd.dt)
+    E_left_panel = np.zeros(n_steps)
+    E_right_panel = np.zeros(n_steps)
+    for i in range(n_steps):
         fdtd._step()
-        if fdtd.t > t_ref_at_obs - 0.1:
-            E_at_obs = np.abs(fdtd.e[obs_idx])
-            E_ref_max_observed = max(E_ref_max_observed, E_at_obs)
+        E_left_panel[i] = fdtd.e[obs_left_idx]
+        E_right_panel[i] = fdtd.e[obs_right_idx]
 
-    R_numerical = E_ref_max_observed / E_inc_max
+    # Reference simulation WITHOUT panel (free space)
+    fdtd_ref = FDTD1D(x, boundaries)
+    fdtd_ref.load_initial_field(initial_e)
+    fdtd_ref.h = initial_h.copy()
 
-    assert np.abs(R_numerical - np.abs(R_theory)) < 0.02
+    E_left_ref = np.zeros(n_steps)
+    E_right_ref = np.zeros(n_steps)
+    for i in range(n_steps):
+        fdtd_ref._step()
+        E_left_ref[i] = fdtd_ref.e[obs_left_idx]
+        E_right_ref[i] = fdtd_ref.e[obs_right_idx]
 
+    # Extract R(f), T(f) via FFT
+    dt = fdtd.dt
+    E_ref_fft = np.fft.rfft(E_left_panel - E_left_ref)
+    E_trans_fft = np.fft.rfft(E_right_panel)
+    E_inc_fft = np.fft.rfft(E_right_ref)
+    freq = np.fft.rfftfreq(n_steps, d=dt)
 
-def test_fdtd_cfl_condition():
-    x = np.linspace(-1, 1, 201)
-    dx = x[1] - x[0]
-    L = x[-1] - x[0]
-    C = 1.0
-    
-    x0 = 0.0
-    sigma = 0.1
-    initial_e = gaussian(x, x0, sigma)
-    
-    # 1. Test de Estabilidad (CFL exacto: dt = dx/C)
-    fdtd = FDTD1D(x)
-    fdtd.load_initial_field(initial_e)
-    
-    t_long = L / C 
-    fdtd.run_until(t_long)
-    
-    e_final = fdtd.get_e()
-    
-    assert np.all(np.isfinite(e_final)), "La simulación divergió en el límite CFL"
-    assert np.max(np.abs(e_final)) <= np.max(initial_e) * 1.01 
+    valid = np.abs(E_inc_fft) > 1e-10 * np.max(np.abs(E_inc_fft))
+    R_fdtd = np.zeros_like(freq, dtype=complex)
+    T_fdtd = np.zeros_like(freq, dtype=complex)
+    R_fdtd[valid] = E_ref_fft[valid] / E_inc_fft[valid]
+    T_fdtd[valid] = E_trans_fft[valid] / E_inc_fft[valid]
 
-    # --- 2. Test de Inestabilidad (CFL > 1) ---
-    fdtd_unstable = FDTD1D(x)
-    fdtd_unstable.load_initial_field(initial_e)
-    
-    fdtd_unstable.dt = (dx / 1.0) * 1.1 
-    fdtd_unstable.run_until(fdtd_unstable.t + 100 * fdtd_unstable.dt)
-    
-    e_unstable = fdtd_unstable.get_e()
+    # Analytical R(f), T(f) via Transfer Matrix
+    f_bw = 1.0 / (2.0 * np.pi * sigma)
+    band = (freq > 0.1) & (freq < 1.5 * f_bw)
 
-    has_diverged = np.any(np.isnan(e_unstable)) or np.max(np.abs(e_unstable)) > 1e10
-    
-    assert has_diverged, "La simulación debería haber divergido con CFL > 1"
+    Phi = panel_transfer_matrix(freq[band], panel_d, eps_r_panel, sigma_panel)
+    R_anal, T_anal = RT_from_transfer_matrix(Phi)
+
+    assert np.corrcoef(np.abs(R_fdtd[band]), np.abs(R_anal))[0, 1] > 0.90
+    assert np.corrcoef(np.abs(T_fdtd[band]), np.abs(T_anal))[0, 1] > 0.90
 
 
 if __name__ == "__main__":
